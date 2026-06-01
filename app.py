@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from src.crawler import XHSCrawler
 from src.style_analyzer import StyleAnalyzer
 from src.content_generator import ContentGenerator
+from src.note_evaluator import NoteEvaluator
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ app = Flask(__name__)
 crawler = XHSCrawler()
 analyzer = StyleAnalyzer()
 generator = ContentGenerator()
+evaluator = NoteEvaluator()
 
 # ─── 从环境变量读取 LLM 配置（.env 优先于前端 modal）────────────
 def _env_key():    return os.getenv("OPENAI_API_KEY",  "").strip()
@@ -410,6 +412,29 @@ def api_analyze_visual():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(exc)}), 500
+
+@app.route("/api/evaluate", methods=["POST"])
+def api_evaluate():
+    data = request.get_json(force=True)
+    note = data.get("note") or {}
+    topic = data.get("topic", "").strip()
+    profile = data.get("style_profile") or {}
+    sample_posts = data.get("sample_posts", [])
+    api_key, base_url, model = _resolve_llm(data)
+
+    if not note or (not note.get("title") and not note.get("content")):
+        return jsonify({"error": "请输入要评估的笔记 note"}), 400
+
+    result = evaluator.evaluate(
+        note=note,
+        topic=topic,
+        style_profile=profile,
+        reference_posts=sample_posts,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+    )
+    return jsonify({"success": True, "data": result})
 
 
 if __name__ == "__main__":
