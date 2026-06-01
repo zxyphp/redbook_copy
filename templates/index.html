@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小红书风格蒸馏系统 | XHS Style Distiller</title>
+  <meta name="description" content="通过AI蒸馏小红书账号风格，自动学习创作特征，批量生成高质量同风格内容">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset & Base ───────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --xhs-red: #FF2442;
+      --xhs-red-dim: rgba(255,36,66,.15);
+      --xhs-red-glow: rgba(255,36,66,.35);
+      --bg: #080810;
+      --bg2: #0f0f1a;
+      --bg3: #16162a;
+      --card: rgba(255,255,255,.04);
+      --card-hover: rgba(255,255,255,.07);
+      --border: rgba(255,255,255,.08);
+      --border-active: rgba(255,36,66,.5);
+      --text: #f0f0f8;
+      --text2: #9090b0;
+      --text3: #5a5a80;
+      --success: #00d26a;
+      --warn: #f5a623;
+      --blue: #4f8aff;
+      --radius: 14px;
+      --shadow: 0 8px 32px rgba(0,0,0,.5);
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter','Noto Sans SC', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    ::selection { background: var(--xhs-red-dim); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Animations ─────────────────────────────────────────── */
+    @keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse  { 0%,100%{ opacity:1; } 50%{ opacity:.5; } }
+    @keyframes spin   { to{ transform:rotate(360deg); } }
+    @keyframes shimmer{
+      0%  { background-position: -200% 0; }
+      100%{ background-position:  200% 0; }
+    }
+    @keyframes ripple {
+      0%  { transform: scale(1); opacity: 1; }
+      100%{ transform: scale(2.5); opacity: 0; }
+    }
+    @keyframes glowPulse {
+      0%, 100%{ box-shadow: 0 0 0 0 var(--xhs-red-glow); }
+      50%      { box-shadow: 0 0 24px 4px var(--xhs-red-glow); }
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(8,8,16,.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 60px;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 18px; font-weight: 700; letter-spacing: -.3px;
+    }
+    .logo-icon {
+      width: 32px; height: 32px; background: var(--xhs-red);
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      font-size: 16px; box-shadow: 0 0 16px var(--xhs-red-glow);
+    }
+    .header-actions { display: flex; align-items: center; gap: 12px; }
+    .btn-api-key {
+      padding: 7px 16px; border-radius: 8px;
+      background: var(--card); border: 1px solid var(--border);
+      color: var(--text2); font-size: 13px; cursor: pointer;
+      transition: all .2s; font-family: inherit;
+    }
+    .btn-api-key:hover { background: var(--card-hover); color: var(--text); border-color: var(--xhs-red); }
+    .api-status {
+      font-size: 12px; padding: 4px 10px; border-radius: 20px;
+      background: var(--card); border: 1px solid var(--border);
+    }
+    .api-status.active { color: var(--success); border-color: rgba(0,210,106,.3); background: rgba(0,210,106,.08); }
+
+    /* ── Pipeline ────────────────────────────────────────────── */
+    .pipeline {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0; padding: 20px 24px; background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+    }
+    .step {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      position: relative; flex: 1; max-width: 220px;
+    }
+    .step-connector {
+      width: 80px; height: 2px; background: var(--border);
+      position: relative; flex-shrink: 0; margin-top: -20px;
+      transition: background .4s;
+    }
+    .step-connector.done { background: linear-gradient(90deg, var(--success), var(--xhs-red)); }
+    .step-dot {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; background: var(--bg2);
+      transition: all .3s; position: relative;
+    }
+    .step-dot.active {
+      border-color: var(--xhs-red);
+      box-shadow: 0 0 0 4px var(--xhs-red-dim);
+      animation: glowPulse 2s ease-in-out infinite;
+    }
+    .step-dot.done { border-color: var(--success); background: rgba(0,210,106,.1); }
+    .step-label { font-size: 12px; color: var(--text3); font-weight: 500; text-align: center; }
+    .step-label.active { color: var(--xhs-red); }
+    .step-label.done { color: var(--success); }
+    .step-sublabel { font-size: 10px; color: var(--text3); }
+
+    /* ── Main Layout ─────────────────────────────────────────── */
+    .main { display: grid; grid-template-columns: 320px 1fr 380px; gap: 16px; padding: 20px 20px; min-height: calc(100vh - 140px); }
+
+    /* ── Card ────────────────────────────────────────────────── */
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+      animation: fadeIn .4s ease both;
+    }
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 600;
+    }
+    .card-title .step-badge {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--xhs-red); color: white;
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card-body { padding: 20px; }
+
+    /* ── Form Elements ───────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; font-weight: 500; }
+    .form-input, .form-textarea, .form-select {
+      width: 100%; padding: 10px 14px;
+      background: rgba(255,255,255,.04); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 14px;
+      font-family: inherit; transition: all .2s; outline: none;
+    }
+    .form-input:focus, .form-textarea:focus, .form-select:focus {
+      border-color: var(--xhs-red); box-shadow: 0 0 0 3px var(--xhs-red-dim);
+    }
+    .form-textarea { resize: vertical; min-height: 80px; }
+    .form-select { cursor: pointer; }
+    .form-select option { background: var(--bg3); }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 10px 20px; border-radius: 10px; font-size: 14px;
+      font-weight: 600; cursor: pointer; border: none; font-family: inherit;
+      transition: all .2s; white-space: nowrap;
+    }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--xhs-red); color: white;
+      box-shadow: 0 4px 16px var(--xhs-red-glow);
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px var(--xhs-red-glow);
+    }
+    .btn-secondary {
+      background: var(--card); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover:not(:disabled) { background: var(--card-hover); }
+    .btn-ghost {
+      background: transparent; color: var(--text2); border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: rgba(255,255,255,.2); }
+    .btn-sm { padding: 7px 14px; font-size: 12px; border-radius: 8px; }
+    .btn-full { width: 100%; }
+
+    /* ── Spinner ─────────────────────────────────────────────── */
+    .spinner {
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3);
+      border-top-color: white; border-radius: 50%;
+      animation: spin .7s linear infinite; flex-shrink: 0;
+    }
+    .spinner-sm { width: 12px; height: 12px; }
+
+    /* ── Account Selector ────────────────────────────────────── */
+    .account-type-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+    }
+    .account-type-card {
+      padding: 12px; border-radius: 10px;
+      background: var(--card); border: 1px solid var(--border);
+      cursor: pointer; transition: all .2s; text-align: center;
+    }
+    .account-type-card:hover { background: var(--card-hover); border-color: rgba(255,255,255,.15); }
+    .account-type-card.selected { border-color: var(--xhs-red); background: var(--xhs-red-dim); }
+    .account-type-card .icon { font-size: 24px; margin-bottom: 4px; }
+    .account-type-card .label { font-size: 12px; font-weight: 600; color: var(--text); }
+    .account-type-card .desc { font-size: 10px; color: var(--text2); margin-top: 2px; }
+
+    /* ── Tab ─────────────────────────────────────────────────── */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tab {
+      padding: 8px 16px; font-size: 13px; font-weight: 500;
+      color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent;
+      transition: all .2s; margin-bottom: -1px;
+    }
+    .tab.active { color: var(--xhs-red); border-bottom-color: var(--xhs-red); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; animation: fadeIn .3s; }
+
+    /* ── Post Cards ──────────────────────────────────────────── */
+    .post-card {
+      background: rgba(255,255,255,.02); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px; margin-bottom: 10px;
+      cursor: pointer; transition: all .2s;
+    }
+    .post-card:hover { background: var(--card-hover); border-color: rgba(255,255,255,.12); }
+    .post-card-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); line-height: 1.4; }
+    .post-card-preview { font-size: 12px; color: var(--text2); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .post-meta { display: flex; gap: 12px; margin-top: 8px; }
+    .post-meta span { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 3px; }
+
+    /* ── Account Info Card ───────────────────────────────────── */
+    .account-info {
+      background: var(--xhs-red-dim); border: 1px solid var(--xhs-red);
+      border-radius: 10px; padding: 14px; margin-bottom: 16px;
+      animation: fadeIn .3s;
+    }
+    .account-info-top { display: flex; align-items: center; gap: 12px; }
+    .account-avatar {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: var(--xhs-red); display: flex; align-items: center; justify-content: center;
+      font-size: 22px; flex-shrink: 0;
+    }
+    .account-name { font-size: 15px; font-weight: 700; }
+    .account-bio { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .account-stats { display: flex; gap: 16px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+    .account-stat { text-align: center; }
+    .account-stat .val { font-size: 16px; font-weight: 700; color: var(--xhs-red); }
+    .account-stat .key { font-size: 10px; color: var(--text3); margin-top: 2px; }
+
+    /* ── Style Profile ───────────────────────────────────────── */
+    .profile-grid { display: flex; flex-direction: column; gap: 12px; }
+    .profile-section {
+      background: rgba(255,255,255,.02); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px; animation: fadeIn .4s ease both;
+    }
+    .profile-section-title {
+      font-size: 11px; font-weight: 700; color: var(--xhs-red);
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;
+    }
+    .profile-tag {
+      display: inline-flex; padding: 4px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 500; margin: 3px;
+      background: rgba(255,255,255,.06); border: 1px solid var(--border);
+    }
+    .profile-tag.emoji { background: rgba(255,36,66,.1); border-color: rgba(255,36,66,.25); color: var(--xhs-red); }
+    .profile-tag.topic { background: rgba(79,138,255,.1); border-color: rgba(79,138,255,.25); color: var(--blue); }
+    .profile-tag.feature { background: rgba(0,210,106,.1); border-color: rgba(0,210,106,.25); color: var(--success); }
+    .profile-quote {
+      font-size: 12px; color: var(--text2); line-height: 1.6;
+      padding: 8px 12px; background: rgba(255,255,255,.03); border-radius: 6px;
+      border-left: 2px solid var(--xhs-red); margin-bottom: 6px;
+      white-space: pre-wrap; font-family: inherit;
+    }
+    .profile-kv { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .profile-kv .key { font-size: 12px; color: var(--text2); }
+    .profile-kv .val { font-size: 12px; font-weight: 600; color: var(--text); }
+    .mode-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    }
+    .mode-badge.llm { background: rgba(255,36,66,.15); color: var(--xhs-red); }
+    .mode-badge.rule { background: rgba(245,166,35,.12); color: var(--warn); }
+
+    /* ── Generated Content ───────────────────────────────────── */
+    .generated-title {
+      font-size: 16px; font-weight: 700; margin-bottom: 12px;
+      color: var(--text); line-height: 1.4;
+      padding: 12px; background: var(--xhs-red-dim);
+      border: 1px solid rgba(255,36,66,.2); border-radius: 8px;
+    }
+    .generated-body {
+      font-size: 14px; color: var(--text2); line-height: 1.8;
+      white-space: pre-wrap; padding: 16px;
+      background: rgba(255,255,255,.02); border: 1px solid var(--border);
+      border-radius: 8px; max-height: 420px; overflow-y: auto;
+      font-family: 'Noto Sans SC', sans-serif;
+    }
+    .generated-tags { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .generated-tag {
+      padding: 4px 10px; border-radius: 20px; font-size: 12px;
+      background: var(--xhs-red-dim); border: 1px solid rgba(255,36,66,.3);
+      color: var(--xhs-red); font-weight: 500;
+    }
+
+    /* ── Toast ───────────────────────────────────────────────── */
+    .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 999; display: flex; flex-direction: column; gap: 8px; }
+    .toast {
+      padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 500;
+      box-shadow: var(--shadow); animation: fadeIn .3s ease both;
+      max-width: 320px; display: flex; align-items: center; gap: 8px;
+    }
+    .toast.success { background: rgba(0,210,106,.9); color: #fff; }
+    .toast.error   { background: rgba(255,60,60,.9); color: #fff; }
+    .toast.info    { background: rgba(30,30,60,.95); border: 1px solid var(--border); color: var(--text); }
+
+    /* ── Modal ───────────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.7);
+      backdrop-filter: blur(8px); z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      animation: fadeIn .2s;
+    }
+    .modal {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 16px; padding: 28px; width: 460px; max-width: 95vw;
+      box-shadow: var(--shadow);
+    }
+    .modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+    .modal p { font-size: 13px; color: var(--text2); margin-bottom: 20px; line-height: 1.6; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+    /* ── Empty / Loading States ──────────────────────────────── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 48px 24px; text-align: center;
+    }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: .5; }
+    .empty-text { font-size: 14px; color: var(--text3); }
+    .loading-shimmer {
+      background: linear-gradient(90deg, var(--card) 25%, rgba(255,255,255,.07) 50%, var(--card) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 6px; height: 14px; margin-bottom: 8px;
+    }
+    .shimmer-block { padding: 14px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 10px; }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 1200px) {
+      .main { grid-template-columns: 280px 1fr 320px; }
+    }
+    @media (max-width: 900px) {
+      .main { grid-template-columns: 1fr; }
+      .pipeline { gap: 4px; }
+      .step-connector { width: 40px; }
+    }
+
+    /* ── Misc ────────────────────────────────────────────────── */
+    .section-divider {
+      border: none; border-top: 1px solid var(--border); margin: 16px 0;
+    }
+    .hint {
+      font-size: 11px; color: var(--text3); margin-top: 4px; line-height: 1.5;
+    }
+    .scroll-area { max-height: 360px; overflow-y: auto; }
+    .tag { display: inline-flex; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .tag-warn { background: rgba(245,166,35,.15); color: var(--warn); }
+    .tag-info { background: rgba(79,138,255,.15); color: var(--blue); }
+
+    /* ── Model Chips ─────────────────────────────────────────── */
+    .model-chip {
+      display: inline-flex; padding: 4px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      background: rgba(255,255,255,.06); border: 1px solid var(--border);
+      color: var(--text2); transition: all .15s; font-family: 'Inter', monospace;
+    }
+    .model-chip:hover { background: var(--xhs-red-dim); border-color: var(--xhs-red); color: var(--xhs-red); }
+    .model-chip.active { background: var(--xhs-red-dim); border-color: var(--xhs-red); color: var(--xhs-red); }
+
+    /* ── Visual Analysis ─────────────────────────────────────── */
+    .visual-scene {
+      display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+      background: linear-gradient(135deg, rgba(168,85,247,.12), rgba(99,102,241,.12));
+      border: 1px solid rgba(168,85,247,.3); border-radius: 10px; margin-bottom: 14px;
+    }
+    .visual-scene-icon { font-size: 28px; }
+    .visual-scene-name { font-size: 15px; font-weight: 700; color: #c084fc; }
+    .visual-scene-dist { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+    /* 图片网格 */
+    .visual-img-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+      margin-bottom: 16px;
+    }
+    .visual-img-wrap {
+      position: relative; border-radius: 10px; overflow: hidden;
+      aspect-ratio: 3/4; background: var(--surface2);
+      border: 1px solid var(--border); cursor: pointer;
+      transition: transform .2s, box-shadow .2s;
+    }
+    .visual-img-wrap:hover { transform: scale(1.03); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .visual-img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+    .visual-img-badge {
+      position: absolute; bottom: 4px; left: 4px;
+      background: rgba(0,0,0,.65); border-radius: 6px;
+      padding: 2px 6px; font-size: 10px; color: #fff;
+    }
+    .visual-img-scene {
+      position: absolute; top: 4px; right: 4px;
+      background: rgba(168,85,247,.85); border-radius: 6px;
+      padding: 2px 6px; font-size: 10px; color: #fff; font-weight: 600;
+    }
+
+    /* 每张图片分析详情 */
+    .per-img-card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px; margin-bottom: 10px;
+    }
+    .per-img-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .per-img-thumb {
+      width: 56px; height: 72px; border-radius: 6px; object-fit: cover;
+      flex-shrink: 0; border: 1px solid var(--border);
+    }
+    .per-img-scene-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 11px; font-weight: 700;
+      background: rgba(168,85,247,.2); color: #c084fc;
+      border: 1px solid rgba(168,85,247,.3);
+    }
+
+    .visual-dim { margin-bottom: 12px; }
+    .visual-dim-label {
+      font-size: 11px; font-weight: 700; color: var(--text3);
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
+    }
+    .visual-tag {
+      display: inline-flex; padding: 4px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 500; margin: 3px; cursor: default;
+    }
+    .vtag-subject  { background: rgba(251,146,60,.12);  border: 1px solid rgba(251,146,60,.3);  color: #fb923c; }
+    .vtag-action   { background: rgba(34,197,94,.1);    border: 1px solid rgba(34,197,94,.3);   color: #4ade80; }
+    .vtag-lighting { background: rgba(234,179,8,.1);    border: 1px solid rgba(234,179,8,.3);   color: #facc15; }
+    .vtag-env      { background: rgba(56,189,248,.1);   border: 1px solid rgba(56,189,248,.3);  color: #38bdf8; }
+    .vtag-comp     { background: rgba(168,85,247,.1);   border: 1px solid rgba(168,85,247,.3);  color: #c084fc; }
+    .draw-prompt-box {
+      background: rgba(168,85,247,.06); border: 1px solid rgba(168,85,247,.2);
+      border-radius: 8px; padding: 12px; margin-top: 12px;
+      font-size: 12px; color: var(--text2); line-height: 1.7;
+      white-space: pre-wrap; max-height: 140px; overflow-y: auto;
+    }
+    /* Fade-in stagger */
+    .profile-section:nth-child(1) { animation-delay: .0s; }
+    .profile-section:nth-child(2) { animation-delay: .05s; }
+    .profile-section:nth-child(3) { animation-delay: .1s; }
+    .profile-section:nth-child(4) { animation-delay: .15s; }
+    .profile-section:nth-child(5) { animation-delay: .2s; }
+    .profile-section:nth-child(6) { animation-delay: .25s; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">📖</div>
+    <span>小红书风格蒸馏</span>
+    <span class="tag tag-info" style="font-size:10px;margin-left:4px;">DEMO</span>
+  </div>
+  <div class="header-actions">
+    <span class="api-status" id="apiStatus">⚫ 规则模式（免API）</span>
+    <button class="btn-api-key" onclick="openModal()">🔑 配置 API Key</button>
+  </div>
+</header>
+
+<!-- ── Pipeline ───────────────────────────────────────────── -->
+<div class="pipeline">
+  <div class="step">
+    <div class="step-dot active" id="dot1">📥</div>
+    <div class="step-label active" id="label1">STEP 1</div>
+    <div class="step-sublabel">数据采集</div>
+  </div>
+  <div class="step-connector" id="conn1"></div>
+  <div class="step">
+    <div class="step-dot" id="dot2">🔬</div>
+    <div class="step-label" id="label2">STEP 2</div>
+    <div class="step-sublabel">风格蒸馏</div>
+  </div>
+  <div class="step-connector" id="conn2"></div>
+  <div class="step">
+    <div class="step-dot" id="dot3">✍️</div>
+    <div class="step-label" id="label3">STEP 3</div>
+    <div class="step-sublabel">内容生成</div>
+  </div>
+</div>
+
+<!-- ── Main ───────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- ─── LEFT: 数据采集 ─────────────────────────── -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="step-badge">1</div>
+          数据采集
+        </div>
+      </div>
+      <div class="card-body">
+
+        <div class="tabs">
+          <div class="tab active" onclick="switchTab('mock')" id="tab-mock">🎭 Mock 账号</div>
+          <div class="tab" onclick="switchTab('real')" id="tab-real">🔴 真实账号</div>
+        </div>
+
+        <!-- Mock Tab -->
+        <div class="tab-panel active" id="panel-mock">
+          <div class="form-label">选择模拟账号类型</div>
+          <div class="account-type-grid">
+            <div class="account-type-card selected" onclick="selectType('food', this)" id="type-food">
+              <div class="icon">🍜</div>
+              <div class="label">美食探店</div>
+              <div class="desc">探店打卡·性价比</div>
+            </div>
+            <div class="account-type-card" onclick="selectType('travel', this)" id="type-travel">
+              <div class="icon">🌍</div>
+              <div class="label">旅行攻略</div>
+              <div class="desc">攻略干货·目的地</div>
+            </div>
+            <div class="account-type-card" onclick="selectType('career', this)" id="type-career">
+              <div class="icon">💼</div>
+              <div class="label">职场干货</div>
+              <div class="desc">职场技巧·成长</div>
+            </div>
+            <div class="account-type-card" onclick="selectType('fashion', this)" id="type-fashion">
+              <div class="icon">👗</div>
+              <div class="label">穿搭分享</div>
+              <div class="desc">穿搭公式·单品</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Real Tab -->
+        <div class="tab-panel" id="panel-real">
+          <!-- 三种爬取模式选择 -->
+          <div style="display:flex;gap:6px;margin-bottom:14px;">
+            <button class="btn btn-secondary btn-sm" id="real-mode-note"    onclick="switchRealMode('note')"    style="flex:1;">📄 单篇笔记</button>
+            <button class="btn btn-secondary btn-sm" id="real-mode-profile" onclick="switchRealMode('profile')" style="flex:1;">👤 用户主页</button>
+            <button class="btn btn-secondary btn-sm" id="real-mode-batch"   onclick="switchRealMode('batch')"   style="flex:1;">📚 批量URL</button>
+          </div>
+
+          <!-- 单篇笔记 -->
+          <div id="real-panel-note">
+            <div class="form-group">
+              <label class="form-label">笔记 URL</label>
+              <input class="form-input" id="realNoteUrl"
+                placeholder="https://www.xiaohongshu.com/explore/6a1c459e...?xsec_token=...">
+              <p class="hint">完整粘贴浏览器地址栏 URL（含 xsec_token 参数）</p>
+            </div>
+          </div>
+
+          <!-- 用户主页 -->
+          <div id="real-panel-profile" style="display:none;">
+            <div class="form-group">
+              <label class="form-label">用户主页 URL</label>
+              <input class="form-input" id="realProfileUrl"
+                placeholder="https://www.xiaohongshu.com/user/profile/xxxxxx">
+            </div>
+            <div class="form-group">
+              <label class="form-label">最多获取笔记数</label>
+              <select class="form-select" id="realMaxPosts">
+                <option value="5">5 篇（快速）</option>
+                <option value="10" selected>10 篇</option>
+                <option value="20">20 篇</option>
+                <option value="30">30 篇（慢）</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 批量 URL -->
+          <div id="real-panel-batch" style="display:none;">
+            <div class="form-group">
+              <label class="form-label">批量笔记 URL（每行一个）</label>
+              <textarea class="form-textarea" id="realBatchUrls" style="min-height:100px;"
+                placeholder="https://www.xiaohongshu.com/explore/aaa?xsec_token=...&#10;https://www.xiaohongshu.com/explore/bbb?xsec_token=..."></textarea>
+            </div>
+          </div>
+
+          <!-- Cookie（通用） -->
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+              <span>Cookie（登录后从 DevTools 复制，可选）</span>
+              <button onclick="showCookieGuide()" style="background:none;border:none;color:var(--blue);font-size:11px;cursor:pointer;">❓ 如何获取</button>
+            </label>
+            <textarea class="form-textarea" id="realCookie" style="min-height:70px;"
+              placeholder="web_session=xxx; a1=xxx; ... （不填则以游客身份访问，部分内容可能不可见）"></textarea>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" onclick="doCrawl()" id="btnCrawl">
+          <span id="crawlBtnText">📥 获取笔记数据</span>
+        </button>
+
+        <!-- Account Info -->
+        <div id="accountInfo" style="margin-top:16px;display:none;"></div>
+
+        <!-- Posts List -->
+        <div id="postsList" style="margin-top:12px;display:none;">
+          <hr class="section-divider">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div style="font-size:13px;font-weight:600;">笔记列表</div>
+            <button class="btn btn-secondary btn-sm" onclick="doAnalyze()" id="btnAnalyze">🔬 开始分析</button>
+          </div>
+          <div class="scroll-area" id="postsContainer"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── CENTER: 风格蒸馏 ────────────────────────── -->
+  <div>
+    <div class="card" style="height:100%;">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="step-badge">2</div>
+          风格蒸馏 · 风格画像
+        </div>
+        <div id="analyzeModeBadge"></div>
+      </div>
+      <div class="card-body" id="profileBody" style="overflow-y:auto;max-height:calc(100vh - 240px);">
+        <div class="empty-state">
+          <div class="empty-icon">🔬</div>
+          <div class="empty-text">完成 Step 1 后点击「开始分析」<br>自动提取账号风格画像</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 视觉风格分析卡片 -->
+    <div class="card" style="margin-top:12px;" id="visualCard">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="step-badge" style="background:linear-gradient(135deg,#a855f7,#6366f1);">📸</div>
+          图片视觉风格
+        </div>
+        <div id="visualModeBadge"></div>
+      </div>
+      <div class="card-body">
+        <div id="visualBody">
+          <div class="empty-state" style="padding:24px;">
+            <div class="empty-icon">🖼️</div>
+            <div class="empty-text">完成文字分析后<br>点击下方按钮分析图片风格</div>
+          </div>
+        </div>
+        <button class="btn btn-full" id="btnVisual" onclick="doVisualAnalyze()"
+          style="margin-top:12px;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;border:none;">
+          <span id="visualBtnText">📸 分析图片视觉风格</span>
+        </button>
+        <p class="hint" style="margin-top:6px;">需要配置支持视觉的模型（gpt-4o-mini / claude-3.5 等）</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── RIGHT: 内容生成 ─────────────────────────── -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="step-badge">3</div>
+          内容生成
+        </div>
+        <div id="genModeBadge"></div>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">💡 输入要写的话题</label>
+          <input class="form-input" id="topicInput"
+            placeholder="例：北京最值得去的咖啡馆、年终总结技巧...">
+          <p class="hint">支持多个关键词，用逗号分隔</p>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doGenerate()" id="btnGenerate">
+          <span id="genBtnText">✍️ 生成仿风格内容</span>
+        </button>
+
+        <div id="generatedContent" style="margin-top:16px;display:none;">
+          <hr class="section-divider">
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div style="font-size:13px;font-weight:600;">生成结果</div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-ghost btn-sm" onclick="copyContent()">📋 复制全文</button>
+              <button class="btn btn-ghost btn-sm" onclick="doGenerate()">🔄 重新生成</button>
+            </div>
+          </div>
+
+          <div id="genTitle" class="generated-title"></div>
+          <div id="genBody" class="generated-body"></div>
+          <div id="genTags" class="generated-tags"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tips Card -->
+    <div class="card" style="margin-top:12px;">
+      <div class="card-body">
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;">💡 使用提示</div>
+        <div style="font-size:12px;color:var(--text3);line-height:1.8;">
+          <div>🆓 <strong style="color:var(--text2);">免 API Key：</strong>规则分析 + 模板生成，即刻可用</div>
+          <div style="margin-top:6px;">🤖 <strong style="color:var(--text2);">配置 API Key：</strong>LLM深度分析，效果更佳</div>
+          <div style="margin-top:6px;">🔴 <strong style="color:var(--text2);">真实账号：</strong>需提供浏览器 Cookie</div>
+          <div style="margin-top:6px;">📋 <strong style="color:var(--text2);">生成结果：</strong>可直接复制发布或二次修改</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── API Key Modal ────────────────────────────────────────── -->
+<div class="modal-overlay" id="modalOverlay" style="display:none;" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <h3>🔑 配置 API Key</h3>
+    <p>配置后将使用 LLM 进行深度风格分析和高质量内容生成。<br>
+    支持 OpenAI 及任何兼容 API（如 DeepSeek、通义千问等）。<br>
+    Key 仅在本地传递，不存储在任何地方。</p>
+
+    <div class="form-group">
+      <label class="form-label">API Key</label>
+      <input class="form-input" id="modalApiKey" type="password" placeholder="sk-...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Base URL</label>
+      <input class="form-input" id="modalBaseUrl" value="https://api.openai.com/v1">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+        <span class="model-chip" onclick="setProvider('openai')"   title="OpenAI 官方">🌐 OpenAI</span>
+        <span class="model-chip" onclick="setProvider('bailian')"  title="阿里云百炼">☁️ 阿里百炼</span>
+        <span class="model-chip" onclick="setProvider('deepseek')" title="DeepSeek">🔮 DeepSeek</span>
+        <span class="model-chip" onclick="setProvider('moonshot')" title="月之暗面 Kimi">🌙 Moonshot</span>
+        <span class="model-chip" onclick="setProvider('zhipu')"    title="智谱 GLM">🧠 智谱AI</span>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Model（可直接输入自定义模型名）</label>
+      <input class="form-input" id="modalModel" placeholder="例：gpt-4o-mini / claude-3-5-sonnet / qwen-max">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+        <span class="model-chip" onclick="setModel('gpt-4o-mini')">gpt-4o-mini</span>
+        <span class="model-chip" onclick="setModel('gpt-4o')">gpt-4o</span>
+        <span class="model-chip" onclick="setModel('gpt-4.1-mini')">gpt-4.1-mini</span>
+        <span class="model-chip" onclick="setModel('deepseek-chat')">deepseek-chat</span>
+        <span class="model-chip" onclick="setModel('deepseek-reasoner')">deepseek-reasoner</span>
+        <span class="model-chip" onclick="setModel('qwen-turbo')">qwen-turbo</span>
+        <span class="model-chip" onclick="setModel('qwen-plus')">qwen-plus</span>
+        <span class="model-chip" onclick="setModel('glm-4-flash')">glm-4-flash</span>
+        <span class="model-chip" onclick="setModel('claude-3-5-haiku-20241022')">claude-3-5-haiku</span>
+        <span class="model-chip" onclick="setModel('gemini-2.0-flash')">gemini-2.0-flash</span>
+      </div>
+    </div>
+    <div class="modal-actions" style="flex-direction:column;gap:8px;">
+      <div style="display:flex;gap:8px;width:100%;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="closeModal()">取消</button>
+        <button class="btn btn-secondary" style="flex:1;" id="btnTestLLM" onclick="testLlmConnection()">🔌 测试连接</button>
+        <button class="btn btn-primary" style="flex:2;" onclick="saveApiKey()">✅ 保存并启用</button>
+      </div>
+      <div id="testLLMResult" style="font-size:12px;min-height:18px;text-align:center;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Cookie 获取指引 Modal ──────────────────────────────── -->
+<div class="modal-overlay" id="cookieModalOverlay" style="display:none;" onclick="closeModalOutside(event)">
+  <div class="modal" style="width:520px;">
+    <h3>🍪 如何获取小红书 Cookie</h3>
+    <p>Cookie 让爬虫模拟登录状态访问内容。获取步骤：</p>
+    <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:13px;line-height:2;color:var(--text2);">
+      <div><span style="color:var(--xhs-red);font-weight:700;">1.</span> 在 Chrome/Safari 中打开 <strong style="color:var(--text);">xiaohongshu.com</strong> 并<strong style="color:var(--text);">登录账号</strong></div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">2.</span> 按 <strong style="color:var(--text);">F12</strong>（或右键 → 检查元素）打开 DevTools</div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">3.</span> 切换到 <strong style="color:var(--text);">Network（网络）</strong> 标签页</div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">4.</span> 刷新页面，找到任意一个 <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;">xiaohongshu.com</code> 请求</div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">5.</span> 点击该请求 → <strong style="color:var(--text);">Headers（标头）</strong> → 找到 <strong style="color:var(--text);">Request Headers</strong></div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">6.</span> 找到 <strong style="color:var(--text);">cookie:</strong> 字段，右键复制完整值</div>
+      <div><span style="color:var(--xhs-red);font-weight:700;">7.</span> 粘贴到 Cookie 输入框中</div>
+    </div>
+    <div style="margin-top:14px;padding:10px 14px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.2);border-radius:8px;font-size:12px;color:var(--warn);">
+      ⚠️ Cookie 包含你的登录凭证，<strong>仅在本地使用</strong>，不会上传至任何服务器。<br>
+      请勿在不可信的环境中使用此功能。
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal()">✅ 我知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast Container ─────────────────────────────────────── -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ── Script ─────────────────────────────────────────────────── -->
+<script>
+// ── State ──────────────────────────────────────────────────
+const state = {
+  mode: 'mock',       // 'mock' | 'real'
+  accountType: 'food',
+  realMode: 'note',   // 'note' | 'profile' | 'batch'
+  accountData: null,
+  styleProfile: null,
+  apiKey: '',
+  baseUrl: 'https://api.openai.com/v1',
+  model: 'gpt-4o-mini',
+};
+
+// ── Pipeline Step Control ───────────────────────────────────
+function setStep(active) {
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById(`dot${i}`);
+    const label = document.getElementById(`label${i}`);
+    dot.className = 'step-dot' + (i < active ? ' done' : i === active ? ' active' : '');
+    label.className = 'step-label' + (i < active ? ' done' : i === active ? ' active' : '');
+    if (i < 3) {
+      const conn = document.getElementById(`conn${i}`);
+      conn.className = 'step-connector' + (i < active ? ' done' : '');
+    }
+  }
+}
+setStep(1);
+
+// ── Tab Switching ───────────────────────────────────────────
+function switchTab(tab) {
+  state.mode = tab;
+  ['mock','real'].forEach(t => {
+    document.getElementById(`tab-${t}`).className = 'tab' + (t === tab ? ' active' : '');
+    document.getElementById(`panel-${t}`).className = 'tab-panel' + (t === tab ? ' active' : '');
+  });
+  if (tab === 'real') switchRealMode(state.realMode);
+}
+
+// ── Real Sub-Mode Switching ─────────────────────────────────
+function switchRealMode(mode) {
+  state.realMode = mode;
+  ['note','profile','batch'].forEach(m => {
+    const btn   = document.getElementById(`real-mode-${m}`);
+    const panel = document.getElementById(`real-panel-${m}`);
+    if (btn)   btn.className   = 'btn btn-sm ' + (m === mode ? 'btn-primary' : 'btn-secondary');
+    if (panel) panel.style.display = m === mode ? 'block' : 'none';
+  });
+}
+switchRealMode('note');
+
+// ── Account Type Selection ──────────────────────────────────
+function selectType(type, el) {
+  state.accountType = type;
+  document.querySelectorAll('.account-type-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+// ── STEP 1: Crawl ───────────────────────────────────────────
+async function doCrawl() {
+  const btn = document.getElementById('btnCrawl');
+  const btnText = document.getElementById('crawlBtnText');
+  btn.disabled = true;
+
+  let body, endpoint;
+
+  if (state.mode === 'mock') {
+    endpoint = '/api/crawl';
+    body = { mode: 'mock', account_type: state.accountType };
+    btnText.innerHTML = '<span class="spinner"></span> 加载中...';
+  } else {
+    // 真实爬取 — Playwright
+    endpoint = '/api/crawl/real';
+    const cookie = (document.getElementById('realCookie') || {}).value || '';
+    const rm = state.realMode;
+
+    if (rm === 'note') {
+      const url = document.getElementById('realNoteUrl').value.trim();
+      if (!url) { toast('请输入笔记 URL', 'error'); btn.disabled=false; btnText.innerHTML='📥 获取'; return; }
+      body = { mode: 'note', url, cookie };
+      btnText.innerHTML = '<span class="spinner"></span> 浏览器启动中...';
+    } else if (rm === 'profile') {
+      const url = document.getElementById('realProfileUrl').value.trim();
+      if (!url) { toast('请输入用户主页 URL', 'error'); btn.disabled=false; btnText.innerHTML='📥 获取'; return; }
+      const max_posts = document.getElementById('realMaxPosts').value;
+      body = { mode: 'profile', url, cookie, max_posts };
+      btnText.innerHTML = '<span class="spinner"></span> 正在爬取主页...';
+    } else {
+      const rawUrls = document.getElementById('realBatchUrls').value.trim();
+      if (!rawUrls) { toast('请输入笔记 URL', 'error'); btn.disabled=false; btnText.innerHTML='📥 获取'; return; }
+      body = { mode: 'batch', urls: rawUrls.split('\n').filter(u=>u.trim()), cookie };
+      btnText.innerHTML = '<span class="spinner"></span> 批量爬取中...';
+    }
+    toast('🚀 Playwright 浏览器已启动，请稍候（约 10-30 秒）...', 'info', 10000);
+  }
+
+  try {
+    const res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || '获取失败');
+
+    state.accountData = json.data;
+    renderAccountInfo(json.data);
+    renderPosts(json.data.posts);
+    setStep(2);
+    const src = state.mode === 'real' ? '（真实数据）' : '';
+    toast(`✅ 数据获取成功！共 ${json.data.posts.length} 篇笔记${src}`, 'success');
+
+  } catch(e) {
+    toast('❌ ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.innerHTML = '📥 重新获取';
+  }
+}
+
+function renderAccountInfo(data) {
+  const el = document.getElementById('accountInfo');
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div class="account-info">
+      <div class="account-info-top">
+        <div class="account-avatar">${data.avatar || '📖'}</div>
+        <div>
+          <div class="account-name">${data.name}</div>
+          <div class="account-bio">${data.bio || ''}</div>
+        </div>
+      </div>
+      <div class="account-stats">
+        <div class="account-stat"><div class="val">${data.followers || '—'}</div><div class="key">粉丝</div></div>
+        <div class="account-stat"><div class="val">${data.post_count}</div><div class="key">笔记数</div></div>
+        <div class="account-stat"><div class="val">${(data.avg_likes||0).toLocaleString()}</div><div class="key">均点赞</div></div>
+      </div>
+    </div>`;
+}
+
+function renderPosts(posts) {
+  const container = document.getElementById('postsContainer');
+  const wrapper = document.getElementById('postsList');
+  wrapper.style.display = 'block';
+  container.innerHTML = posts.map((p, i) => `
+    <div class="post-card">
+      <div class="post-card-title">${escHtml(p.title)}</div>
+      <div class="post-card-preview">${escHtml(p.content)}</div>
+      <div class="post-meta">
+        <span>❤️ ${(p.likes||0).toLocaleString()}</span>
+        <span>💬 ${(p.comments||0).toLocaleString()}</span>
+        <span>#️⃣ ${(p.tags||[]).length} 标签</span>
+      </div>
+    </div>`).join('');
+}
+
+// ── STEP 2: Analyze ─────────────────────────────────────────
+async function doAnalyze() {
+  if (!state.accountData) return toast('请先获取账号数据', 'error');
+  const btn = document.getElementById('btnAnalyze');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner spinner-sm"></span> 分析中...';
+  document.getElementById('profileBody').innerHTML = loadingShimmer();
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ account_data: state.accountData, api_key: state.apiKey, base_url: state.baseUrl, model: state.model })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || '分析失败');
+
+    state.styleProfile = json.data;
+    renderProfile(json.data);
+    setStep(3);
+    toast(`✅ 风格蒸馏完成！(${json.data.mode === 'llm' ? 'LLM 深度分析' : '规则分析'})`, 'success');
+
+  } catch(e) {
+    toast('❌ ' + e.message, 'error');
+    document.getElementById('profileBody').innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><div class="empty-text">${escHtml(e.message)}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🔬 重新分析';
+  }
+}
+
+// ── 图片视觉风格分析 ─────────────────────────────────────────
+async function doVisualAnalyze() {
+  if (!state.accountData) return toast('请先获取账号数据', 'error');
+
+  // 收集图片 URL
+  const allImages = [];
+  (state.accountData.posts || []).forEach(p => {
+    (p.images || []).forEach(url => { if (!allImages.includes(url)) allImages.push(url); });
+  });
+
+  if (allImages.length === 0) {
+    return toast('未发现图片（Mock 数据无图片，请使用真实账号）', 'error');
+  }
+
+  const btn = document.getElementById('btnVisual');
+  const btnText = document.getElementById('visualBtnText');
+  btn.disabled = true;
+  btnText.innerHTML = `<span class="spinner"></span> 分析中（${Math.min(allImages.length, 6)} 张图片）...`;
+  document.getElementById('visualBody').innerHTML = loadingShimmer();
+  toast(`📸 Vision LLM 分析图片中，请稍候（每张约 5-10 秒）...`, 'info', 30000);
+
+  try {
+    const topic = document.getElementById('topicInput')?.value?.trim() || '';
+    const res = await fetch('/api/analyze/visual', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        image_urls: allImages,
+        api_key: state.apiKey,      // 若为空，后端自动用 .env key
+        base_url: state.baseUrl,
+        model: state.model,
+        max_images: 6,
+        topic,
+      })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || '视觉分析失败');
+
+    state.visualProfile = json.data;
+    renderVisualProfile(json.data);
+    toast(`✅ 视觉风格提取完成！场景：${json.data.Scene_Name}（共 ${json.data.analyzed_count} 张）`, 'success');
+
+  } catch(e) {
+    toast('❌ ' + e.message, 'error');
+    document.getElementById('visualBody').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">❌</div><div class="empty-text">${escHtml(e.message)}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btnText.innerHTML = '📸 重新分析';
+  }
+}
+
+// ── 维度配置 ────────────────────────────────────────────────
+const VISUAL_DIMS = [
+  { key: '主体', label: '👤 主体', cls: 'vtag-subject', desc: '画面核心人物或静物' },
+  { key: '动作', label: '🎬 动作', cls: 'vtag-action', desc: '行为姿态' },
+  { key: '光影', label: '☀️ 光影', cls: 'vtag-lighting', desc: '光线色调氛围' },
+  { key: '环境', label: '🏠 环境', cls: 'vtag-env', desc: '背景道具空间' },
+  { key: '构图', label: '📐 构图', cls: 'vtag-comp', desc: '视角景深排版' },
+];
+
+function _dimTagsHtml(data, small = false) {
+  return VISUAL_DIMS.map(d => {
+    const tags = (data[d.key] || []);
+    if (!tags.length) return '';
+    const tagsHtml = tags.map(t =>
+      `<span class="visual-tag ${d.cls}"${small ? ' style="font-size:11px;padding:2px 7px;"' : ''}>${escHtml(t)}</span>`
+    ).join('');
+    return `<div class="visual-dim">
+      <div class="visual-dim-label">${d.label}</div>
+      <div>${tagsHtml}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderVisualProfile(vp) {
+  const perImage = vp.per_image || [];
+
+  // ── 1. 图片缩略图网格 ─────────────────────────────────────
+  let imgGridHtml = '';
+  if (perImage.length > 0) {
+    const imgItems = perImage.map((r, i) => {
+      const src = r._source_url || '';
+      const sceneName = r.Scene_Name || r.Scene_ID || '未知';
+      return `<div class="visual-img-wrap" onclick="scrollToPerImg(${i})" title="点击查看详细分析">
+        <img src="${escHtml(src)}" loading="lazy"
+             onerror="this.parentElement.style.display='none'"
+             alt="图片${i+1}">
+        <div class="visual-img-badge">图 ${i+1}</div>
+        <div class="visual-img-scene">${escHtml(sceneName)}</div>
+      </div>`;
+    }).join('');
+    imgGridHtml = `
+      <div style="font-size:12px;font-weight:600;color:var(--text3);letter-spacing:1px;margin-bottom:8px;">
+        📷 已分析图片（${perImage.length} 张）
+      </div>
+      <div class="visual-img-grid">${imgItems}</div>`;
+  }
+
+  // ── 2. 聚合场景卡 ─────────────────────────────────────────
+  const distStr = Object.entries(vp.scene_distribution || {})
+    .map(([k, v]) => `${k}×${v}`).join('  ');
+  const sceneHtml = `
+    <div class="visual-scene">
+      <div class="visual-scene-icon">${vp.Scene_Emoji || '✨'}</div>
+      <div>
+        <div class="visual-scene-name">${escHtml(vp.Scene_Name)} 场景</div>
+        <div class="visual-scene-dist">共分析 ${vp.analyzed_count || 0} 张 · ${distStr}</div>
+      </div>
+    </div>`;
+
+  // ── 3. 聚合 5 维度标签 ────────────────────────────────────
+  const aggregatedDimsHtml = `
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;padding-top:4px;">
+      🧩 聚合视觉风格标签
+    </div>
+    ${_dimTagsHtml(vp)}`;
+
+  // ── 4. 绘图提示词 ─────────────────────────────────────────
+  const drawPrompt = vp.draw_prompt || {};
+  const promptHtml = drawPrompt.chinese ? `
+    <hr class="section-divider">
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🎨 AI 绘图提示词</div>
+    <div class="draw-prompt-box" id="drawPromptBox">${escHtml(drawPrompt.chinese)}</div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-ghost btn-sm" onclick="copyDrawPrompt()">📋 复制提示词</button>
+    </div>` : '';
+
+  // ── 5. 每张图片单独分析 ───────────────────────────────────
+  let perImgHtml = '';
+  if (perImage.length > 0) {
+    const cards = perImage.map((r, i) => {
+      const src = r._source_url || '';
+      const sceneName = r.Scene_Name || SCENE_MAP_FRONT[r.Scene_ID] || r.Scene_ID || '';
+      return `<div class="per-img-card" id="perImg${i}">
+        <div class="per-img-header">
+          <img class="per-img-thumb" src="${escHtml(src)}"
+               onerror="this.style.display='none'" alt="图片${i+1}">
+          <div>
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">图片 ${i+1}</div>
+            ${sceneName ? `<span class="per-img-scene-badge">${escHtml(sceneName)}</span>` : ''}
+          </div>
+        </div>
+        ${_dimTagsHtml(r, true)}
+      </div>`;
+    }).join('');
+    perImgHtml = `
+      <hr class="section-divider">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;">
+        🔍 逐图分析详情
+      </div>
+      ${cards}`;
+  }
+
+  document.getElementById('visualBody').innerHTML =
+    imgGridHtml + sceneHtml + aggregatedDimsHtml + promptHtml + perImgHtml;
+
+  document.getElementById('visualModeBadge').innerHTML =
+    `<span class="mode-badge llm">🤖 Vision LLM</span>`;
+}
+
+const SCENE_MAP_FRONT = {
+  OFFICE:'办公职场', HOME:'居家生活', LIFESTYLE_SEEDING:'生活化种草',
+  PARENT_CHILD:'温馨亲子', SCIENCE:'干货科普', GIFT:'送礼攻略',
+};
+
+function scrollToPerImg(i) {
+  const el = document.getElementById(`perImg${i}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function copyDrawPrompt() {
+  const el = document.getElementById('drawPromptBox');
+  if (el) navigator.clipboard.writeText(el.textContent).then(() => toast('📋 已复制绘图提示词！', 'success'));
+}
+
+function renderProfile(p) {
+  const modeHtml = p.mode === 'llm'
+    ? '<span class="mode-badge llm">🤖 LLM 分析</span>'
+    : '<span class="mode-badge rule">⚙️ 规则分析</span>';
+  document.getElementById('analyzeModeBadge').innerHTML = modeHtml;
+
+  const sections = [];
+
+  // 基本画像
+  sections.push(`
+    <div class="profile-section">
+      <div class="profile-section-title">📋 账号定位</div>
+      ${p.account_summary ? `<div style="font-size:13px;color:var(--text);margin-bottom:8px;">${escHtml(p.account_summary)}</div>` : ''}
+      <div class="profile-kv"><span class="key">人设</span><span class="val">${escHtml(p.persona||'—')}</span></div>
+      <div class="profile-kv"><span class="key">正式程度</span><span class="val">${escHtml(p.formality||'—')}</span></div>
+      ${p.target_audience ? `<div class="profile-kv"><span class="key">目标受众</span><span class="val">${escHtml(p.target_audience)}</span></div>` : ''}
+    </div>`);
+
+  // 语气风格
+  sections.push(`
+    <div class="profile-section">
+      <div class="profile-section-title">🗣️ 语气风格</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.7;">${escHtml(p.tone||'—')}</div>
+      ${p.unique_style_elements ? `<div style="margin-top:8px;">${(Array.isArray(p.unique_style_elements)?p.unique_style_elements:[p.unique_style_elements]).map(f=>`<span class="profile-tag feature">✦ ${escHtml(f)}</span>`).join('')}</div>` : ''}
+    </div>`);
+
+  // Emoji
+  const emojis = p.common_emojis || [];
+  sections.push(`
+    <div class="profile-section">
+      <div class="profile-section-title">😊 Emoji 使用</div>
+      <div class="profile-kv"><span class="key">使用频率</span><span class="val">${escHtml(p.emoji_frequency||'—')}</span></div>
+      ${p.emoji_position ? `<div class="profile-kv"><span class="key">位置分布</span><span class="val">${escHtml(p.emoji_position)}</span></div>` : ''}
+      <div style="margin-top:4px;">${emojis.map(e=>`<span class="profile-tag emoji">${e}</span>`).join('')}</div>
+    </div>`);
+
+  // 写作特点
+  const features = p.writing_features || [];
+  if (features.length) {
+    sections.push(`
+      <div class="profile-section">
+        <div class="profile-section-title">✍️ 写作特征</div>
+        <div style="display:flex;flex-wrap:wrap;">${features.map(f=>`<span class="profile-tag feature">${escHtml(f)}</span>`).join('')}</div>
+        ${p.content_structure ? `<div style="margin-top:10px;font-size:12px;color:var(--text2);">结构：${escHtml(p.content_structure)}</div>` : ''}
+      </div>`);
+  }
+
+  // 开头/结尾
+  const openings = p.opening_patterns || [];
+  const closings = p.closing_patterns || [];
+  if (openings.length || closings.length) {
+    sections.push(`
+      <div class="profile-section">
+        <div class="profile-section-title">📝 惯用句式</div>
+        ${openings.length ? `<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">开头方式</div>${openings.map(o=>`<div class="profile-quote">${escHtml(o)}</div>`).join('')}` : ''}
+        ${closings.length ? `<div style="font-size:11px;color:var(--text3);margin-top:8px;margin-bottom:4px;">结尾方式</div>${closings.map(c=>`<div class="profile-quote">${escHtml(c)}</div>`).join('')}` : ''}
+      </div>`);
+  }
+
+  // 话题标签
+  const topics = p.topics || [];
+  if (topics.length) {
+    sections.push(`
+      <div class="profile-section">
+        <div class="profile-section-title">🏷️ 话题与标签</div>
+        <div class="profile-kv"><span class="key">平均字数</span><span class="val">${p.avg_word_count||'—'} 字</span></div>
+        <div class="profile-kv"><span class="key">平均标签数</span><span class="val">${p.hashtag_count||'—'} 个</span></div>
+        ${p.hashtag_style ? `<div class="profile-kv"><span class="key">标签风格</span><span class="val">${escHtml(p.hashtag_style)}</span></div>` : ''}
+        <div style="margin-top:6px;">${topics.map(t=>`<span class="profile-tag topic">#${escHtml(t)}</span>`).join('')}</div>
+      </div>`);
+  }
+
+  // 互动策略
+  const engage = p.engagement_tactics || [];
+  if (engage.length) {
+    sections.push(`
+      <div class="profile-section">
+        <div class="profile-section-title">💬 互动策略</div>
+        <ul style="list-style:none;display:flex;flex-direction:column;gap:6px;">
+          ${engage.map(e=>`<li style="font-size:12px;color:var(--text2);display:flex;gap:6px;"><span style="color:var(--xhs-red);">→</span>${escHtml(e)}</li>`).join('')}
+        </ul>
+      </div>`);
+  }
+
+  // 模仿建议
+  if (p.replication_guide) {
+    const guides = Array.isArray(p.replication_guide) ? p.replication_guide : [p.replication_guide];
+    sections.push(`
+      <div class="profile-section">
+        <div class="profile-section-title">🎯 模仿建议</div>
+        <ul style="list-style:none;display:flex;flex-direction:column;gap:6px;">
+          ${guides.map((g,i)=>`<li style="font-size:12px;color:var(--text2);display:flex;gap:6px;"><span style="color:var(--success);font-weight:700;">${i+1}.</span>${escHtml(g)}</li>`).join('')}
+        </ul>
+      </div>`);
+  }
+
+  document.getElementById('profileBody').innerHTML = `<div class="profile-grid">${sections.join('')}</div>`;
+}
+
+// ── STEP 3: Generate ────────────────────────────────────────
+async function doGenerate() {
+  if (!state.styleProfile) return toast('请先完成风格分析', 'error');
+  const topic = document.getElementById('topicInput').value.trim();
+  if (!topic) return toast('请输入要写的话题', 'error');
+
+  const btn = document.getElementById('btnGenerate');
+  const btnText = document.getElementById('genBtnText');
+  btn.disabled = true;
+  btnText.innerHTML = '<span class="spinner"></span> 生成中...';
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        style_profile: state.styleProfile,
+        topic,
+        sample_posts: (state.accountData?.posts || []),
+        api_key: state.apiKey,
+        base_url: state.baseUrl,
+        model: state.model,
+      })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || '生成失败');
+
+    renderGenerated(json.data);
+    const modeText = json.data.mode === 'llm' ? 'LLM 生成' : '模板生成';
+    document.getElementById('genModeBadge').innerHTML = json.data.mode === 'llm'
+      ? '<span class="mode-badge llm">🤖 LLM 生成</span>'
+      : '<span class="mode-badge rule">⚙️ 模板生成</span>';
+    toast(`✅ 内容生成完成！(${modeText})`, 'success');
+
+  } catch(e) {
+    toast('❌ ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.innerHTML = '✍️ 重新生成';
+  }
+}
+
+function renderGenerated(data) {
+  document.getElementById('generatedContent').style.display = 'block';
+  document.getElementById('genTitle').textContent = data.title || '';
+  document.getElementById('genBody').textContent = data.content || '';
+  const tags = data.tags || [];
+  document.getElementById('genTags').innerHTML = tags.map(t=>`<span class="generated-tag">#${escHtml(t)}</span>`).join('');
+}
+
+function copyContent() {
+  const title = document.getElementById('genTitle').textContent;
+  const body = document.getElementById('genBody').textContent;
+  const tags = Array.from(document.querySelectorAll('.generated-tag')).map(t=>t.textContent).join(' ');
+  const full = `${title}\n\n${body}\n\n${tags}`;
+  navigator.clipboard.writeText(full).then(() => toast('📋 已复制到剪贴板！', 'success'));
+}
+
+// ── Modal ───────────────────────────────────────────────────
+function openModal() {
+  document.getElementById('modalApiKey').value = state.apiKey;
+  document.getElementById('modalBaseUrl').value = state.baseUrl;
+  document.getElementById('modalModel').value = state.model;
+  _syncModelChips(state.model);
+  document.getElementById('modalOverlay').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modalOverlay').style.display = 'none';
+  const cg = document.getElementById('cookieModalOverlay');
+  if (cg) cg.style.display = 'none';
+}
+function closeModalOutside(e) {
+  if (e.target.id === 'modalOverlay' || e.target.id === 'cookieModalOverlay') closeModal();
+}
+function saveApiKey() {
+  state.apiKey = document.getElementById('modalApiKey').value.trim();
+  state.baseUrl = document.getElementById('modalBaseUrl').value.trim();
+  state.model = document.getElementById('modalModel').value.trim() || 'gpt-4o-mini';
+  closeModal();
+  const statusEl = document.getElementById('apiStatus');
+  if (state.apiKey) {
+    statusEl.textContent = `🟢 LLM 模式 (${state.model})`;
+    statusEl.className = 'api-status active';
+    toast(`✅ 已配置，模型：${state.model}`, 'success');
+  } else {
+    statusEl.textContent = '⚫ 规则模式（免API）';
+    statusEl.className = 'api-status';
+    toast('ℹ️ 已切换为规则分析模式', 'info');
+  }
+}
+
+function setModel(name) {
+  document.getElementById('modalModel').value = name;
+  _syncModelChips(name);
+}
+
+const PROVIDERS = {
+  openai:   { url: 'https://api.openai.com/v1',                              model: 'gpt-4o-mini' },
+  bailian:  { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',      model: 'qwen-plus' },
+  deepseek: { url: 'https://api.deepseek.com/v1',                            model: 'deepseek-chat' },
+  moonshot: { url: 'https://api.moonshot.cn/v1',                             model: 'moonshot-v1-8k' },
+  zhipu:    { url: 'https://open.bigmodel.cn/api/paas/v4',                   model: 'glm-4-flash' },
+};
+
+function setProvider(name) {
+  const p = PROVIDERS[name];
+  if (!p) return;
+  document.getElementById('modalBaseUrl').value = p.url;
+  setModel(p.model);
+  const labels = { openai:'OpenAI', bailian:'阿里云百炼', deepseek:'DeepSeek', moonshot:'月之暗面', zhipu:'智谱AI' };
+  toast(`☁️ 已切换到 ${labels[name] || name}，Base URL 和默认模型已自动填入`, 'info', 3000);
+  // 清除旧测试结果
+  document.getElementById('testLLMResult').textContent = '';
+}
+
+async function testLlmConnection() {
+  const apiKey  = document.getElementById('modalApiKey').value.trim();
+  const baseUrl = document.getElementById('modalBaseUrl').value.trim();
+  const model   = document.getElementById('modalModel').value.trim() || 'gpt-4o-mini';
+  const resultEl = document.getElementById('testLLMResult');
+  const btn = document.getElementById('btnTestLLM');
+
+  if (!apiKey) { resultEl.style.color='#ef4444'; resultEl.textContent = '请先输入 API Key'; return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner spinner-sm"></span> 测试中...';
+  resultEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/test_llm', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ api_key: apiKey, base_url: baseUrl, model })
+    });
+    const json = await res.json();
+    if (json.success) {
+      resultEl.style.color = '#4ade80';
+      resultEl.textContent = `✅ 连接成功！模型 [${json.model}] 正常响应`;
+    } else {
+      resultEl.style.color = '#ef4444';
+      resultEl.textContent = json.error || '连接失败';
+    }
+  } catch(e) {
+    resultEl.style.color = '#ef4444';
+    resultEl.textContent = '❌ 请求失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🔌 测试连接';
+  }
+}
+
+function _syncModelChips(name) {
+  document.querySelectorAll('.model-chip').forEach(c => {
+    c.className = 'model-chip' + (c.textContent.trim() === name ? ' active' : '');
+  });
+}
+
+// ── Load Env Config ────────────────────────────────────────────
+async function loadEnvConfig() {
+  try {
+    const res = await fetch('/api/env_config');
+    const cfg = await res.json();
+    const statusEl = document.getElementById('apiStatus');
+
+    if (cfg.env_active) {
+      // .env 已配置：清空前端 state（让后端直接读 env）
+      state.apiKey  = '';          // 不传 key，后端用 env 里的
+      state.baseUrl = cfg.base_url;
+      state.model   = cfg.model;
+      statusEl.textContent = `🟢 .env 已配置 (${cfg.model}) [${cfg.api_key_hint}]`;
+      statusEl.className = 'api-status active';
+      // 同步 modal 里的显示
+      const urlEl = document.getElementById('modalBaseUrl');
+      const modelEl = document.getElementById('modalModel');
+      if (urlEl && !urlEl.value) urlEl.value = cfg.base_url;
+      if (modelEl && !modelEl.value) { modelEl.value = cfg.model; _syncModelChips(cfg.model); }
+    } else {
+      state.baseUrl = cfg.base_url;
+      state.model   = cfg.model;
+    }
+  } catch(e) {
+    console.warn('loadEnvConfig failed:', e);
+  }
+}
+loadEnvConfig();
+
+// 监听手动输入，同步取消 chip 选中
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('modalModel');
+  if (inp) inp.addEventListener('input', () => _syncModelChips(inp.value.trim()));
+});
+
+function showCookieGuide() {
+  document.getElementById('cookieModalOverlay').style.display = 'flex';
+}
+
+// ── Toast ───────────────────────────────────────────────────
+function toast(msg, type='info', duration=3000) {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = msg;
+  container.appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transform='translateX(100px)'; el.style.transition='all .3s'; setTimeout(()=>el.remove(), 300); }, duration);
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function loadingShimmer() {
+  return Array(4).fill(0).map(()=>`
+    <div class="shimmer-block">
+      <div class="loading-shimmer" style="width:40%;height:10px;margin-bottom:12px;"></div>
+      <div class="loading-shimmer" style="width:100%;"></div>
+      <div class="loading-shimmer" style="width:85%;"></div>
+      <div class="loading-shimmer" style="width:60%;"></div>
+    </div>`).join('');
+}
+
+// ── Keyboard shortcut ────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    if (state.styleProfile) doGenerate();
+    else if (state.accountData) doAnalyze();
+    else doCrawl();
+  }
+});
+</script>
+
+</body>
+</html>
